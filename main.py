@@ -141,13 +141,13 @@ def gf_multiplication_7(pn1: int, pn2: int) -> int:
   return p
 
 # Converts a 128-bit block to the number it represents.
-def convert_block_to_number(block: List[int]) -> int:
+def block_to_number(block: List[int]) -> int:
   res: int = 0
   for z in list(zip(range(len(block)-1, -1, -1),block))[::-1]:
     res ^= z[1] << ((z[0])*8) # Every block item is stored on 8 bits.
   return res
 
-def convert_number_to_block(number: int) -> List[int]:
+def number_to_block(number: int) -> List[int]:
   res: List[int] = []
   for i in  range(16):
     res += [(number & (0xFF << i * 8)) >> i * 8]
@@ -211,19 +211,31 @@ def aes_decrypt(msg: List[int], key: List[int]):
   
   return unpad([item for block in blocks for item in block]) # Flatten the decrypted blocks and unpad the result.
 
-def compute_hash_subkey(key: str) -> List[int]:
-  return aes_encrypt([0 for _ in range(16)], convert_from_ascii(key))
+def compute_hash_subkey(key: List[int]) -> List[int]:
+  return aes_encrypt([0 for _ in range(16)], key)
 
-def gcm_encrypt(msg: str, key: str, iv: str, a: str) -> Tuple[List[int], List[int]]:
+def compute_initial_counter_value(iv: List[int]) -> List[int]:
+  counter0: List[int] = []
+  if (len(iv) == 12):
+    counter0 = number_to_block((block_to_number(iv) << 32) & 0x1)
+  else:
+    counter0 = number_to_block((block_to_number(iv)))
+  pass
+
+def _gcm_encrypt(msg: List[int], key: List[int], iv: List[int], a: List[int]) -> Tuple[List[int], List[int]]:
   hash_subkey: List[int] = compute_hash_subkey(key)
 
+  pass
 
+def gcm_encrypt(msg: str, key: str, iv: str, a: str) -> Tuple[List[int], List[int]]:
+  return _gcm_encrypt(convert_from_ascii(msg), convert_from_ascii(key), convert_from_ascii(iv), convert_from_ascii(a))
 
+def gcm_decrypt(ciphertext: str, key: str, iv: str, tag: str, a: str) -> List[int]:
   pass
 
 ################################################## TEST & EXECUTION ##################################################
 
-def test(msg: str, key: str):
+def testECB(msg: str, key: str):
   """ Checks whether or not the provided AES algorithm works at encoding and decoding a specific string for a specific key. """
   _msg = convert_from_ascii(msg)
   _key = convert_from_ascii(key)
@@ -240,8 +252,11 @@ def test(msg: str, key: str):
   assert msg_decrypted == _msg, 'AES does not work'
   print('\n', '#' * 150, '\n', sep='')
 
+def testGCM(msg: str, key: str, iv: str, a: str):
+  pass
+
 if __name__ == '__main__':
   #test('Two One Nine Two', 'Thats my Kung Fu')
   #test('Can you smell what the Rock is cooking?', 'You can\'t see me')
 
-  gcm_encrypt("", "", "", "")
+  gcm_encrypt("Message for AES-256-GCM + Scrypt encryption", "s3kr3tp4ssw0rd", "test", "test")
