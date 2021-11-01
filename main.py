@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 from functools import reduce
 from values import sbox, sbox_inverse
 from pprint import pprint
@@ -148,6 +148,20 @@ def block_to_number(block: List[int]) -> int:
   return res
 
 def number_to_block(number: int) -> List[int]:
+  
+  res: List[int] = []
+  for i in range(16):
+    res += [(number & (0xFF << i * 8)) >> i * 8]
+  return res[::-1]
+
+def numbers_to_block(number: int) -> List[List[int]]:
+  """ For use with numbers of bitsize > 128"""
+  res: List[List[int]] = []
+
+  number_of_blocks = len(bin(number)[2:])//128
+  for j in range(number_of_blocks + 1):
+    
+    0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
   res: List[int] = []
   for i in  range(16):
     res += [(number & (0xFF << i * 8)) >> i * 8]
@@ -159,7 +173,7 @@ def gf_multiplication_128(pn1: int, pn2: int) -> int:
   while pn1 > 0 and pn2 > 0:
     if pn2 & 1 != 0:
       p ^= pn1
-    if pn1 & (1 << 127) != 0: # 0x80 = 0b1000 0000 = 128. If the bit at 2^7 is set, then the number is greater than 128 and needs to be shifted.
+    if pn1 & (1 << 127) != 0:
       pn1 = (pn1 << 1) ^ 0x100000000000000000000000000000087
     else:
       pn1 <<= 1
@@ -171,7 +185,7 @@ def gf_multiplication_128(pn1: int, pn2: int) -> int:
 
 def aes_encrypt(msg: List[int], key: List[int]):
   """ Encrypts a given message with a given key. """
-  assert len(key) * 8 in [128, 192, 256], 'Key size must be 128, 192 or 256 bits (16, 24 or 32 characters)'
+  assert len(key) * 8 in [128, 192, 256], "Key size must be 128, 192 or 256 bits (16, 24 or 32 characters)"
   
   # Static Galois Field multiplication matrix.
   gf_matrix = block_to_matrix([0x02, 0x01, 0x01, 0x03, 0x03, 0x02, 0x01, 0x01, 0x01, 0x03, 0x02, 0x01, 0x01, 0x01, 0x03, 0x02])
@@ -211,21 +225,55 @@ def aes_decrypt(msg: List[int], key: List[int]):
   
   return unpad([item for block in blocks for item in block]) # Flatten the decrypted blocks and unpad the result.
 
-def compute_hash_subkey(key: List[int]) -> List[int]:
-  return aes_encrypt([0 for _ in range(16)], key)
+def compute_ghash(x: List[List[int]], h: int) -> List[int]:
+  """ 
+  @param x a list of numbers, all of bitsize 128.
+  @param h the hash subkey
+  @return ym a 128-bit number
+  """
+  assert len(list(filter(lambda j: not j, map(lambda i: len(i) * 8 == 128, x)))) == 0, "GHASH: components of bit string x have irregular size (len(x) != 128m)"
+  
+  y0 = [0 for _ in range(16)] # y0 is 0^128 ie. an array of 16 bytes all 0.
+  y = [y0]
+  for i in range(len(x)): # while we can consume a block in x -> x_i
+    y += [number_to_block(gf_multiplication_128(block_to_number(xor(y[i], x[i])), h))]
+  return y[-1]
 
-def compute_initial_counter_value(iv: List[int]) -> List[int]:
-  counter0: List[int] = []
-  if (len(iv) == 12):
-    counter0 = number_to_block((block_to_number(iv) << 32) & 0x1)
+def compute_hash_subkey(key: List[int]) -> int:
+  assert len(key) * 8 in [128, 192, 256], 'Key size must be 128, 192 or 256 bits (16, 24 or 32 characters)'
+  return block_to_number(aes_encrypt([0 for _ in range(16)], key))
+
+def pad_number_128(number: int) -> int:
+  return number << (128 - (len(bin(number)[2:]) - (len(bin(number)[2:])//128 *128)))
+
+def compute_initial_counter_value(iv: List[int], h: int) -> List[int]:
+  j0: List[int] = []
+  if (len(bin(block_to_number(iv))[2:]) == 96):
+    print("IV == 96")
+    print(f"IV:", bin(block_to_number(iv)))
+    print(f"Shifted:", bin((block_to_number(iv) << 32) & 0x1))
+    print("Repr:", repr(number_to_block((block_to_number(iv) << 32) & 0x1)))
+    j0 = number_to_block((block_to_number(iv) << 32) & 0x1)
   else:
-    counter0 = number_to_block((block_to_number(iv)))
-  pass
+    iv_blocks: List[List[int]] = []
+
+    print("IV != 96")
+    print("LEN IV:\t", len(bin(block_to_number(iv))[2:]))
+    print("IV:\t\t", bin(block_to_number(iv)))
+    print("Shift 128:\t", bin(pad_number_128(block_to_number(iv)) << 128))
+    print("Add length:\t", bin((pad_number_128(block_to_number(iv)) << 128) ^ len(bin(block_to_number(iv))[2:])))
+    value = (pad_number_128(block_to_number(iv)) << 128) ^ len(bin(block_to_number(iv))[2:])
+    print("BLOCKS:\t", repr2(number_to_block(value)))
+    j0 = compute_ghash(number_to_block(value), h)
+
+  return j0
 
 def _gcm_encrypt(msg: List[int], key: List[int], iv: List[int], a: List[int]) -> Tuple[List[int], List[int]]:
-  hash_subkey: List[int] = compute_hash_subkey(key)
+  h = compute_hash_subkey(key)
+  ghash: List[int] = compute_ghash(key, h)
 
-  pass
+  print(h)
+  print(repr(ghash))
 
 def gcm_encrypt(msg: str, key: str, iv: str, a: str) -> Tuple[List[int], List[int]]:
   return _gcm_encrypt(convert_from_ascii(msg), convert_from_ascii(key), convert_from_ascii(iv), convert_from_ascii(a))
@@ -256,7 +304,8 @@ def testGCM(msg: str, key: str, iv: str, a: str):
   pass
 
 if __name__ == '__main__':
+  pass
   #test('Two One Nine Two', 'Thats my Kung Fu')
   #test('Can you smell what the Rock is cooking?', 'You can\'t see me')
 
-  gcm_encrypt("Message for AES-256-GCM + Scrypt encryption", "s3kr3tp4ssw0rd", "test", "test")
+  #gcm_encrypt("Message for AES-256-GCM + Scrypt encryption", "s3kr3tp4ssw0rd", "test", "test")
