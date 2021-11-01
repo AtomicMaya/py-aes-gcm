@@ -154,19 +154,6 @@ def number_to_block(number: int) -> List[int]:
     res += [(number & (0xFF << i * 8)) >> i * 8]
   return res[::-1]
 
-def numbers_to_block(number: int) -> List[List[int]]:
-  """ For use with numbers of bitsize > 128"""
-  res: List[List[int]] = []
-
-  number_of_blocks = len(bin(number)[2:])//128
-  for j in range(number_of_blocks + 1):
-    
-    0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
-  res: List[int] = []
-  for i in  range(16):
-    res += [(number & (0xFF << i * 8)) >> i * 8]
-  return res[::-1]
-
 def gf_multiplication_128(pn1: int, pn2: int) -> int:
   """ Russian Peasant Multiplication algorithm, used to factor polynomials efficiently in GF(2^n) """
   p = 0
@@ -248,29 +235,25 @@ def pad_number_128(number: int) -> int:
 
 def compute_initial_counter_value(iv: List[int], h: int) -> List[int]:
   j0: List[int] = []
-  if (len(bin(block_to_number(iv))[2:]) == 96):
-    print("IV == 96")
-    print(f"IV:", bin(block_to_number(iv)))
-    print(f"Shifted:", bin((block_to_number(iv) << 32) & 0x1))
-    print("Repr:", repr(number_to_block((block_to_number(iv) << 32) & 0x1)))
-    j0 = number_to_block((block_to_number(iv) << 32) & 0x1)
+  if (len(iv) * 8 == 96):
+    j0 = [*iv, 0x00, 0x00, 0x00, 0x01]
   else:
-    iv_blocks: List[List[int]] = []
-
-    print("IV != 96")
-    print("LEN IV:\t", len(bin(block_to_number(iv))[2:]))
-    print("IV:\t\t", bin(block_to_number(iv)))
-    print("Shift 128:\t", bin(pad_number_128(block_to_number(iv)) << 128))
-    print("Add length:\t", bin((pad_number_128(block_to_number(iv)) << 128) ^ len(bin(block_to_number(iv))[2:])))
-    value = (pad_number_128(block_to_number(iv)) << 128) ^ len(bin(block_to_number(iv))[2:])
-    print("BLOCKS:\t", repr2(number_to_block(value)))
-    j0 = compute_ghash(number_to_block(value), h)
+    missing = 128 - ((len(iv) * 8) % 128)
+    number_of_blocks = ((len(iv) * 8) // 128) + 1
+    iv_blocks: List[List[int]] = [iv[16*i:16*(i+1)] for i in range(number_of_blocks)]
+    iv_blocks[-1] = [*iv_blocks[-1], *[0 for _ in range(16 - len(iv_blocks[-1]))]]
+    iv_blocks += [[0 for _ in range(8)] + number_to_block(len(iv)*8)[-8:]]
+    j0 = compute_ghash(iv_blocks, h)
 
   return j0
+
+def inc_32(block: List[int]) -> List[int]:
+  return block[:12] + number_to_block((block_to_number(block[12:]) + 1) % (2**32))[-4:]
 
 def _gcm_encrypt(msg: List[int], key: List[int], iv: List[int], a: List[int]) -> Tuple[List[int], List[int]]:
   h = compute_hash_subkey(key)
   ghash: List[int] = compute_ghash(key, h)
+  icv: List[int] = compute_initial_counter_value(iv, h)
 
   print(h)
   print(repr(ghash))
