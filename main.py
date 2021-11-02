@@ -1,7 +1,6 @@
 from typing import List, Tuple
 from functools import reduce
-from values import sbox, sbox_inverse
-from pprint import pprint
+from values import sbox
 
 ################################################## UTILITIES ##################################################
 
@@ -10,6 +9,7 @@ def repr(m: List[int]):
   return ' '.join(list(map(lambda x: hex(x)[2:].zfill(2), m))).upper() # Eg. 12 = '0xc' -> 'c' -> '0c' -> '0C'
 
 def repr2(m: List[List[int]]):
+  """ Prints a 2D array out as a string of its contents in hexadecimal, row by row """
   return '\n'.join([' '.join(list(map(lambda x: hex(x)[2:].zfill(2), _m))).upper() for _m in m])
 
 def convert_from_ascii(message: str) -> List[int]:
@@ -25,10 +25,6 @@ def pad(block: List[int]) -> List[int]:
   missing = 16 - (len(block) % 16) # Eg. for len = 9 -> missing = 7, for len = 39 -> missing = 9
   return block + (missing * [missing]) # Append to the block a block containing 'missing' times the number of missing values.
 
-def unpad(block: List[int]) -> List[int]:
-  """ Removes the padding added by the pad function """
-  return block[:-block[-1]] # In pad the value appended is the number of added values, so we can use it as a basis to slice our block again.
-
 def split_to_blocks(message: List[int]) -> List[List[int]]:
   """ Divides a list of numbers into blocks of 16 integers. """
   return [message[i*16:(i+1)*16] for i in range(len(message) // 16)]
@@ -36,10 +32,6 @@ def split_to_blocks(message: List[int]) -> List[List[int]]:
 def get_sbox_value(values: List[int]) -> List[int]:
   """ Substitute values provided with the value at that position in the AES SBox """
   return [sbox[i] for i in values]
-
-""" Reverse the ssbstitution of values provided with the value at that position in the AES Inverse SBox """
-def get_inverse_sbox_value(values: List[int]) -> List[int]:
-  return [sbox_inverse[i] for i in values]
 
 def xor(*values: List[List[int]]) -> List[int]:
   """ Performs a linear XOR among a number of lists of same size. """
@@ -126,47 +118,42 @@ def shift_row(matrix: List[List[int]], right=True):
 
 ############################## NEW FUNCS
 
-def gf_multiplication_7(pn1: int, pn2: int) -> int:
+def gf_multiplication(pn1: int, pn2: int, polynomial: int, limit: int) -> int:
   """ Russian Peasant Multiplication algorithm, used to factor polynomials efficiently in GF(2^n) """
   p = 0
   while pn1 > 0 and pn2 > 0:
     if pn2 & 1 != 0:
       p ^= pn1
-    if pn1 & 0x80 != 0: # 0x80 = 0b1000 0000 = 128. If the bit at 2^7 is set, then the number is greater than 128 and needs to be shifted.
-      pn1 = (pn1 << 1) ^ 0x11b
+    if pn1 & limit != 0: # 0x80 = 0b1000 0000 = 128. If the bit at 2^7 is set, then the number is greater than 128 and needs to be shifted.
+      pn1 = (pn1 << 1) ^ polynomial
     else:
       pn1 <<= 1
     
     pn2 >>= 1
   return p
 
-# Converts a 128-bit block to the number it represents.
+def gf_multiplication_7(pn1: int, pn2: int) -> int:
+  """ GF(2^7), with polynomial X^8 + X^7 + X^2 + X + 1"""
+  return gf_multiplication(pn1, pn2, polynomial=0x11b, limit=0x80)
+
+def gf_multiplication_128(pn1: int, pn2: int) -> int:
+  """ GF(2^128), with polynomial X^128 + X^7 + X^2 + X + 1"""
+  return gf_multiplication(pn1, pn2, polynomial=0x100000000000000000000000000000087, limit=(1 << 127))  
+
 def block_to_number(block: List[int]) -> int:
+  """ Converts a 128-bit block to the number it represents. """
   res: int = 0
   for z in list(zip(range(len(block)-1, -1, -1),block))[::-1]:
     res ^= z[1] << ((z[0])*8) # Every block item is stored on 8 bits.
   return res
 
+
 def number_to_block(number: int) -> List[int]:
-  
+  """ Converts a number to the 128-bit block represented by it. """
   res: List[int] = []
   for i in range(16):
     res += [(number & (0xFF << i * 8)) >> i * 8]
   return res[::-1]
-
-def gf_multiplication_128(pn1: int, pn2: int) -> int:
-  """ Russian Peasant Multiplication algorithm, used to factor polynomials efficiently in GF(2^n) """
-  p = 0
-  while pn1 > 0 and pn2 > 0:
-    if pn2 & 1 != 0:
-      p ^= pn1
-    if pn1 & (1 << 127) != 0:
-      pn1 = (pn1 << 1) ^ 0x100000000000000000000000000000087
-    else:
-      pn1 <<= 1
-    pn2 >>= 1
-  return p
-  
 
 ################################################## AES ENCRYPTION & DECRYPTION #################################################
 
@@ -193,25 +180,6 @@ def aes_encrypt(msg: List[int], key: List[int]):
 
   return [item for block in blocks for item in block]           # Flatten the resulting array.
 
-def aes_decrypt(msg: List[int], key: List[int]):
-  """ Decrypts a given message with a given key. """
-  assert len(key) * 8 in [128, 192, 256], 'Key size must be 128, 192 or 256 bits (16, 24 or 32 characters)'
-
-  gf_matrix = block_to_matrix([0x0e, 0x09, 0x0d, 0x0b, 0x0b, 0x0e, 0x09, 0x0d, 0x0d, 0x0b, 0x0e, 0x09, 0x09, 0x0d, 0x0b, 0x0e])
-  subkeys = generate_subkeys(key=key)
-
-  blocks = split_to_blocks(message=msg) # Split the message in 16-sized blocks
-
-  for i in range(len(blocks)):                  # ECB allows one to operate on each block individually.
-    for s in range(len(subkeys) - 1, 0, -1):    # Work rounds backwards.
-      blocks[i] = block_to_matrix(xor(blocks[i], subkeys[s]))                           # Perform an xor with the relevant round key, and then convert it to a matrix
-      if s != len(subkeys) - 1:
-        blocks[i] = mix_column(gf_matrix, blocks[i])                                    # Perform the Mix Column Operation
-      blocks[i] = get_inverse_sbox_value(matrix_to_block(shift_row(blocks[i], right=False)))  # Perform the reverse Shift Row operation, transform the result to a block and substitute with values from the inverse SBoxes
-    blocks[i] = xor(blocks[i], subkeys[0])                                              # Reverse the round 0 operation
-  
-  return unpad([item for block in blocks for item in block]) # Flatten the decrypted blocks and unpad the result.
-
 def compute_ghash(x: List[List[int]], h: int) -> List[int]:
   """ 
   @param x a list of numbers, all of bitsize 128.
@@ -227,11 +195,9 @@ def compute_ghash(x: List[List[int]], h: int) -> List[int]:
   return y[-1]
 
 def compute_hash_subkey(key: List[int]) -> int:
+  """ Generates the hash subkey, which is an AES encryption of an empty bitstring with the key."""
   assert len(key) * 8 in [128, 192, 256], 'Key size must be 128, 192 or 256 bits (16, 24 or 32 characters)'
   return block_to_number(aes_encrypt([0 for _ in range(16)], key))
-
-def pad_number_128(number: int) -> int:
-  return number << (128 - (len(bin(number)[2:]) - (len(bin(number)[2:])//128 *128)))
 
 def compute_initial_counter_block(iv: List[int], h: int) -> List[int]:
   j0: List[int] = []
@@ -249,67 +215,83 @@ def compute_initial_counter_block(iv: List[int], h: int) -> List[int]:
 def inc_32(block: List[int]) -> List[int]:
   return block[:12] + number_to_block((block_to_number(block[12:]) + 1) % (2**32))[-4:]
 
-def computer_gctr(icb: List[int], key: List[int], x: List[int]) -> List[List[int]]:
+def compute_gctr(cb: List[int], key: List[int], x: List[int]) -> List[int]:
   number_of_blocks = ((len(x) * 8) // 128) + 1
   x_blocks: List[List[int]] = [x[16*i:16*(i+1)] for i in range(number_of_blocks)]
-  counter_values: List[List[int]] = [icb]
+  counter_values: List[List[int]] = [cb]
   y_blocks: List[List[int]] = []
   for i in range(number_of_blocks):
     counter_values += [inc_32(counter_values[-1])]
     y_blocks += [xor(aes_encrypt(counter_values[i], key)[:len(x_blocks[i])], x_blocks[i])]
 
-  return y_blocks
+  return [el for arr in y_blocks for el in arr]
 
-def _gcm_encrypt(msg: List[int], key: List[int], iv: List[int], a: List[int]) -> Tuple[List[int], List[int]]:
-  print("msg", repr2([msg[16*i:16*(i+1)] for i in range(((len(msg) * 8) // 128) + 1)]))
-  print("key", repr(key))
-  print(len(key))
-  print("iv ", repr(iv))
-  print("a  ", repr(a))
+def _gcm_encrypt(p: List[int], key: List[int], iv: List[int], a: List[int]) -> Tuple[List[int], List[int]]:
   h = compute_hash_subkey(key)
-  print("HASH SUCCESS")
-  ghash: List[int] = compute_ghash([key], h)
-  print("GHASH SUCCESS")
   icb: List[int] = compute_initial_counter_block(iv, h) #j0
-  gctr: List[List[int]] = computer_gctr(inc_32(icb), key, msg)
+  ciphertext: List[int] = compute_gctr(inc_32(icb), key, p)
+  v: int = 128 * ((len(a) * 8) // 128 + 1) - (len(a) * 8)
+  u: int = 128 * ((len(ciphertext) * 8) // 128 + 1) - (len(ciphertext) * 8)
+  pre_s: List[int] = a + [0 for x in range(v//8)] + ciphertext + [0 for x in range(u//8)] + number_to_block(len(a) * 8)[-8:] + number_to_block(len(ciphertext) * 8)[-8:]
+  #print(repr2([pre_s[16*i:16*(i+1)] for i in range((len(pre_s) * 8) // 128 + 1)]))
+  s: List[int] = compute_ghash([pre_s[16*i:16*(i+1)] for i in range((len(pre_s) * 8) // 128)], h)
+  t: List[int] = compute_gctr(icb, key, s)
+  return (ciphertext, t)
 
-  print(h)
-  print()
-  print(repr(ghash))
-  print()
-  print(repr2(gctr))
+def _gcm_decrypt(c: List[int], key: List[int], iv: List[int], a: List[int], t: List[int]) -> List[int]:
+  h = compute_hash_subkey(key)
+  icb: List[int] = compute_initial_counter_block(iv, h) #j0
+  
+  v: int = 128 * ((len(a) * 8) // 128 + 1) - (len(a) * 8)
+  u: int = 128 * ((len(c) * 8) // 128 + 1) - (len(c) * 8)
+  pre_s: List[int] = a + [0 for x in range(v//8)] + c + [0 for x in range(u//8)] + number_to_block(len(a) * 8)[-8:] + number_to_block(len(c) * 8)[-8:]
+  s: List[int] = compute_ghash([pre_s[16*i:16*(i+1)] for i in range((len(pre_s) * 8) // 128)], h)
+  computed_t: List[int] = compute_gctr(icb, key, s)
+  if computed_t != t:
+    return convert_from_ascii("FAIL")
+  else:
+    plaintext: List[int] = compute_gctr(inc_32(icb), key, c)
+    return plaintext
+
 
 def gcm_encrypt(msg: str, key: str, iv: str, a: str) -> Tuple[List[int], List[int]]:
   return _gcm_encrypt(convert_from_ascii(msg), convert_from_ascii(key), convert_from_ascii(iv), convert_from_ascii(a))
 
-def gcm_decrypt(ciphertext: str, key: str, iv: str, tag: str, a: str) -> List[int]:
-  pass
+def gcm_decrypt(ciphertext: str, key: str, iv: str, a: str, tag: str) -> List[int]:
+  return _gcm_decrypt(convert_from_ascii(ciphertext), convert_from_ascii(key), convert_from_ascii(iv), convert_from_ascii(a), convert_from_ascii(tag))
 
 ################################################## TEST & EXECUTION ##################################################
 
-def testECB(msg: str, key: str):
-  """ Checks whether or not the provided AES algorithm works at encoding and decoding a specific string for a specific key. """
-  _msg = convert_from_ascii(msg)
-  _key = convert_from_ascii(key)
-  
-  print('Original Plaintext:\t', msg)
-  print('Key:\t\t\t', key, '\n')
-  print('Original:\t\t', repr(_msg), '\n')
-  msg_encrypted = aes_encrypt(msg=_msg, key=_key)
-  print('Encrypted:\t\t', repr(msg_encrypted), '\n')
-  msg_decrypted = aes_decrypt(msg=msg_encrypted, key=_key)
-  print('Decrypted:\t\t', repr(msg_decrypted))
-  print('Decrypted Plaintext:\t', convert_to_ascii(msg_decrypted))
-
-  assert msg_decrypted == _msg, 'AES does not work'
-  print('\n', '#' * 150, '\n', sep='')
-
 def testGCM(msg: str, key: str, iv: str, a: str):
-  pass
+  print('Plaintext')
+  print(repr2([convert_from_ascii(msg)[16*i:16*(i+1)] for i in range((len(convert_from_ascii(msg)) * 8) // 128 + 1)]), end='\n\n')
+  print('Key')
+  print(repr(convert_from_ascii(key)), end='\n\n')
+  
+  print('IV')
+  print(repr(convert_from_ascii(iv)), end='\n\n')
+  print('A')
+  print(repr(convert_from_ascii(a)), end='\n\n')
+
+  ciphertext, tag = gcm_encrypt(msg, key, iv, a)
+  print('Ciphertext')
+  print(repr2([ciphertext[16*i:16*(i+1)] for i in range((len(ciphertext) * 8) // 128 + 1)]), end='\n\n')
+
+  print('Tag')
+  print(repr(tag), end='\n\n')
+
+  plaintext = gcm_decrypt(convert_to_ascii(ciphertext), key, iv, a, convert_to_ascii(tag))
+  
+  if convert_to_ascii(plaintext) == "FAIL":
+    print("FAILURE: TAGS DON'T MATCH")
+    return
+
+  print('Computed Plaintext')
+  print(repr2([plaintext[16*i:16*(i+1)] for i in range((len(plaintext) * 8) // 128 + 1)]), end='\n\n')
+
+  assert msg == convert_to_ascii(plaintext), "AES-GCM decryption has failed"
+  print("Success!")
+  print(f'The plaintext was:\n"{convert_to_ascii(plaintext)}"')
 
 if __name__ == '__main__':
-  pass
-  #test('Two One Nine Two', 'Thats my Kung Fu')
-  #test('Can you smell what the Rock is cooking?', 'You can\'t see me')
-
-  gcm_encrypt("Bob and Alice went for a walk in the fuckity fucken park at fuckall in the morn cos they hadn't much else to do", "You can't see me", "Some bitching IV string my ass", "useless")
+  testGCM("Bob and Alice went for a walk in the fuckity fucken park at fuckall in the morn cos they hadn't much else to", "You can't see me", "Some bitching IV string my ass", "useless")
