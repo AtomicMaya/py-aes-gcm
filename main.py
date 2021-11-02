@@ -147,7 +147,6 @@ def block_to_number(block: List[int]) -> int:
     res ^= z[1] << ((z[0])*8) # Every block item is stored on 8 bits.
   return res
 
-
 def number_to_block(number: int) -> List[int]:
   """ Converts a number to the 128-bit block represented by it. """
   res: List[int] = []
@@ -200,6 +199,7 @@ def compute_hash_subkey(key: List[int]) -> int:
   return block_to_number(aes_encrypt([0 for _ in range(16)], key))
 
 def compute_initial_counter_block(iv: List[int], h: int) -> List[int]:
+  """ Generates the counter block from the IV, with bifurcated behavior depending on whether the IV is 12 bytes long. """
   j0: List[int] = []
   if (len(iv) * 8 == 96):
     j0 = [*iv, 0x00, 0x00, 0x00, 0x01]
@@ -213,9 +213,17 @@ def compute_initial_counter_block(iv: List[int], h: int) -> List[int]:
   return j0
 
 def inc_32(block: List[int]) -> List[int]:
+  """ Increments the 32 least bits by 1 mod 2**32 """
   return block[:12] + number_to_block((block_to_number(block[12:]) + 1) % (2**32))[-4:]
 
 def compute_gctr(cb: List[int], key: List[int], x: List[int]) -> List[int]:
+  """ 
+  Applies the Galois counter process to the provided list of bits.
+  
+  :param cb The counter block
+  :param key The key
+  :param x The block to pass through the Galois counter
+  """
   number_of_blocks = ((len(x) * 8) // 128) + 1
   x_blocks: List[List[int]] = [x[16*i:16*(i+1)] for i in range(number_of_blocks)]
   counter_values: List[List[int]] = [cb]
