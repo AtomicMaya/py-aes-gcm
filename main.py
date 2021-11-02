@@ -233,12 +233,11 @@ def compute_hash_subkey(key: List[int]) -> int:
 def pad_number_128(number: int) -> int:
   return number << (128 - (len(bin(number)[2:]) - (len(bin(number)[2:])//128 *128)))
 
-def compute_initial_counter_value(iv: List[int], h: int) -> List[int]:
+def compute_initial_counter_block(iv: List[int], h: int) -> List[int]:
   j0: List[int] = []
   if (len(iv) * 8 == 96):
     j0 = [*iv, 0x00, 0x00, 0x00, 0x01]
   else:
-    missing = 128 - ((len(iv) * 8) % 128)
     number_of_blocks = ((len(iv) * 8) // 128) + 1
     iv_blocks: List[List[int]] = [iv[16*i:16*(i+1)] for i in range(number_of_blocks)]
     iv_blocks[-1] = [*iv_blocks[-1], *[0 for _ in range(16 - len(iv_blocks[-1]))]]
@@ -250,13 +249,35 @@ def compute_initial_counter_value(iv: List[int], h: int) -> List[int]:
 def inc_32(block: List[int]) -> List[int]:
   return block[:12] + number_to_block((block_to_number(block[12:]) + 1) % (2**32))[-4:]
 
+def computer_gctr(icb: List[int], key: List[int], x: List[int]) -> List[List[int]]:
+  number_of_blocks = ((len(x) * 8) // 128) + 1
+  x_blocks: List[List[int]] = [x[16*i:16*(i+1)] for i in range(number_of_blocks)]
+  counter_values: List[List[int]] = [icb]
+  y_blocks: List[List[int]] = []
+  for i in range(number_of_blocks):
+    counter_values += [inc_32(counter_values[-1])]
+    y_blocks += [xor(aes_encrypt(counter_values[i], key)[:len(x_blocks[i])], x_blocks[i])]
+
+  return y_blocks
+
 def _gcm_encrypt(msg: List[int], key: List[int], iv: List[int], a: List[int]) -> Tuple[List[int], List[int]]:
+  print("msg", repr2([msg[16*i:16*(i+1)] for i in range(((len(msg) * 8) // 128) + 1)]))
+  print("key", repr(key))
+  print(len(key))
+  print("iv ", repr(iv))
+  print("a  ", repr(a))
   h = compute_hash_subkey(key)
-  ghash: List[int] = compute_ghash(key, h)
-  icv: List[int] = compute_initial_counter_value(iv, h)
+  print("HASH SUCCESS")
+  ghash: List[int] = compute_ghash([key], h)
+  print("GHASH SUCCESS")
+  icb: List[int] = compute_initial_counter_block(iv, h) #j0
+  gctr: List[List[int]] = computer_gctr(inc_32(icb), key, msg)
 
   print(h)
+  print()
   print(repr(ghash))
+  print()
+  print(repr2(gctr))
 
 def gcm_encrypt(msg: str, key: str, iv: str, a: str) -> Tuple[List[int], List[int]]:
   return _gcm_encrypt(convert_from_ascii(msg), convert_from_ascii(key), convert_from_ascii(iv), convert_from_ascii(a))
@@ -291,4 +312,4 @@ if __name__ == '__main__':
   #test('Two One Nine Two', 'Thats my Kung Fu')
   #test('Can you smell what the Rock is cooking?', 'You can\'t see me')
 
-  #gcm_encrypt("Message for AES-256-GCM + Scrypt encryption", "s3kr3tp4ssw0rd", "test", "test")
+  gcm_encrypt("Bob and Alice went for a walk in the fuckity fucken park at fuckall in the morn cos they hadn't much else to do", "You can't see me", "Some bitching IV string my ass", "useless")
