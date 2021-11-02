@@ -235,24 +235,43 @@ def compute_gctr(cb: List[int], key: List[int], x: List[int]) -> List[int]:
   return [el for arr in y_blocks for el in arr]
 
 def _gcm_encrypt(p: List[int], key: List[int], iv: List[int], a: List[int]) -> Tuple[List[int], List[int]]:
+  """ 
+  Encrypts the plaintext p using the Galois counter mode, providing a ciphertext and a tag.
+  
+  :param p The plaintext
+  :param key The key
+  :param iv The initialisation vector
+  :param a The additional authentication data
+  :return (c, t) The ciphertext and the tag
+  """
   h = compute_hash_subkey(key)
   icb: List[int] = compute_initial_counter_block(iv, h) #j0
   ciphertext: List[int] = compute_gctr(inc_32(icb), key, p)
   v: int = 128 * ((len(a) * 8) // 128 + 1) - (len(a) * 8)
   u: int = 128 * ((len(ciphertext) * 8) // 128 + 1) - (len(ciphertext) * 8)
-  pre_s: List[int] = a + [0 for x in range(v//8)] + ciphertext + [0 for x in range(u//8)] + number_to_block(len(a) * 8)[-8:] + number_to_block(len(ciphertext) * 8)[-8:]
-  #print(repr2([pre_s[16*i:16*(i+1)] for i in range((len(pre_s) * 8) // 128 + 1)]))
+  pre_s: List[int] = a + [0 for _ in range(v//8)] + ciphertext + [0 for _ in range(u//8)] + number_to_block(len(a) * 8)[-8:] + number_to_block(len(ciphertext) * 8)[-8:]
+  
   s: List[int] = compute_ghash([pre_s[16*i:16*(i+1)] for i in range((len(pre_s) * 8) // 128)], h)
   t: List[int] = compute_gctr(icb, key, s)
   return (ciphertext, t)
 
 def _gcm_decrypt(c: List[int], key: List[int], iv: List[int], a: List[int], t: List[int]) -> List[int]:
+  """ 
+  Decrypts the ciphertext c using the Galois counter mode, providing a plaintext.
+  
+  :param c The ciphertext
+  :param key The key
+  :param iv The initialisation vector
+  :param a The additional authentication data
+  :param t The tag
+  :return (p) The plaintext
+  """
   h = compute_hash_subkey(key)
   icb: List[int] = compute_initial_counter_block(iv, h) #j0
   
   v: int = 128 * ((len(a) * 8) // 128 + 1) - (len(a) * 8)
   u: int = 128 * ((len(c) * 8) // 128 + 1) - (len(c) * 8)
-  pre_s: List[int] = a + [0 for x in range(v//8)] + c + [0 for x in range(u//8)] + number_to_block(len(a) * 8)[-8:] + number_to_block(len(c) * 8)[-8:]
+  pre_s: List[int] = a + [0 for _ in range(v//8)] + c + [0 for _ in range(u//8)] + number_to_block(len(a) * 8)[-8:] + number_to_block(len(c) * 8)[-8:]
   s: List[int] = compute_ghash([pre_s[16*i:16*(i+1)] for i in range((len(pre_s) * 8) // 128)], h)
   computed_t: List[int] = compute_gctr(icb, key, s)
   if computed_t != t:
@@ -263,14 +282,17 @@ def _gcm_decrypt(c: List[int], key: List[int], iv: List[int], a: List[int], t: L
 
 
 def gcm_encrypt(msg: str, key: str, iv: str, a: str) -> Tuple[List[int], List[int]]:
+  """ Helper function that takes encryption parameters as base strings and calls the correct function with the converted content. """
   return _gcm_encrypt(convert_from_ascii(msg), convert_from_ascii(key), convert_from_ascii(iv), convert_from_ascii(a))
 
 def gcm_decrypt(ciphertext: str, key: str, iv: str, a: str, tag: str) -> List[int]:
+  """ Helper function that takes decryption parameters as base strings and calls the correct function with the converted content. """
   return _gcm_decrypt(convert_from_ascii(ciphertext), convert_from_ascii(key), convert_from_ascii(iv), convert_from_ascii(a), convert_from_ascii(tag))
 
 ################################################## TEST & EXECUTION ##################################################
 
-def testGCM(msg: str, key: str, iv: str, a: str):
+def test_gcm(msg: str, key: str, iv: str, a: str):
+  """ Does a *le test* on the *le code* to see if it *le works* """
   print('Plaintext')
   print(repr2([convert_from_ascii(msg)[16*i:16*(i+1)] for i in range((len(convert_from_ascii(msg)) * 8) // 128 + 1)]), end='\n\n')
   print('Key')
@@ -302,4 +324,4 @@ def testGCM(msg: str, key: str, iv: str, a: str):
   print(f'The plaintext was:\n"{convert_to_ascii(plaintext)}"')
 
 if __name__ == '__main__':
-  testGCM("Bob and Alice went for a walk in the fuckity fucken park at fuckall in the morn cos they hadn't much else to", "You can't see me", "Some bitching IV string my ass", "useless")
+  test_gcm("Bob and Alice went for a walk in the fuckity fucken park at fuckall in the morn cos they hadn't much else to", "You can't see me", "Some bitching IV string my ass", "useless")
