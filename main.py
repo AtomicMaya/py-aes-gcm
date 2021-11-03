@@ -19,12 +19,7 @@ def convert_from_ascii(message: str) -> List[int]:
 def convert_to_ascii(block: List[int]) -> str:
   """ Converts a list of ASCII values into the string they represent """
   return ''.join(list(map(lambda x: chr(x), block)))
-
-def pad(block: List[int]) -> List[int]:
-  """ AES padding function, in order to always arrive at blocks of a length that is a multiple of 16 """
-  missing = 16 - (len(block) % 16) # Eg. for len = 9 -> missing = 7, for len = 39 -> missing = 9
-  return block + (missing * [missing]) # Append to the block a block containing 'missing' times the number of missing values.
-
+  
 def split_to_blocks(message: List[int]) -> List[List[int]]:
   """ Divides a list of numbers into blocks of 16 integers. """
   return [message[i*16:(i+1)*16] for i in range(len(message) // 16)]
@@ -164,7 +159,6 @@ def aes_encrypt(msg: List[int], key: List[int]):
   gf_matrix = block_to_matrix([0x02, 0x01, 0x01, 0x03, 0x03, 0x02, 0x01, 0x01, 0x01, 0x03, 0x02, 0x01, 0x01, 0x01, 0x03, 0x02])
   subkeys = generate_subkeys(key=key)
   
-  msg = pad(msg)                            # Pad the original message to a length multiple of 16
   blocks = split_to_blocks(message=msg)     # And split the message in 16-sized blocks
 
   for i in range(len(blocks)):             # ECB allows one to operate on each block individually.
